@@ -118,6 +118,22 @@ fn wgpu_matches_independent_cpu_at_boundaries() {
 }
 
 #[test]
+#[cfg(feature = "wgpu")]
+#[ignore = "requires a WGPU device; run with --ignored --nocapture"]
+fn smaller_batches_preserve_hits_and_buffer_capacity() {
+    let stored = section(u32::MAX, &[0x42], 1, false);
+    let client = crate::unpack::wgpu_search::probe(&stored).unwrap().client;
+    let mut probe = GpuProbe::with_batch(&stored, client, 131).unwrap();
+    for (start, end) in [(0, 131), (search::UINT32_END - 131, search::UINT32_END)] {
+        assert_eq!(
+            probe.scan(start, end).unwrap(),
+            cpu_hits(&stored, start, end)
+        );
+    }
+    assert!(probe.scan(0, 132).is_err());
+}
+
+#[test]
 #[cfg(all(feature = "cuda", cuda_available))]
 #[ignore = "requires NVIDIA GPU, CUDA NVRTC and headers; run with --ignored --nocapture"]
 fn cuda_matches_independent_cpu_at_boundaries() {

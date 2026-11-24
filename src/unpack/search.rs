@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+#[cfg(not(target_arch = "wasm32"))]
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use super::extract::{StoredSection, verify_all};
@@ -14,6 +15,7 @@ pub enum Mode {
     Cpu,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn progress(backend: &'static str, total: u64) -> ProgressBar {
     ProgressBar::with_draw_target(Some(total), ProgressDrawTarget::stderr_with_hz(10))
         .with_prefix(backend)
@@ -29,6 +31,7 @@ pub(crate) fn progress(backend: &'static str, total: u64) -> ProgressBar {
         )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn finish_progress(progress: &ProgressBar) {
     let seconds = progress.elapsed().as_secs_f64();
     let count = progress.position();
@@ -53,7 +56,7 @@ pub fn search(sections: &[StoredSection], mode: Option<Mode>) -> Result<Option<u
     let backends: &[(Mode, &str, GpuSearch)] = &[
         #[cfg(all(feature = "cuda", cuda_available))]
         (Mode::Cuda, "CUDA", super::cuda_search::search),
-        #[cfg(feature = "wgpu")]
+        #[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
         (Mode::Wgpu, "WGPU", super::wgpu_search::search),
     ];
     for &(selected, backend, search) in backends {
@@ -87,4 +90,29 @@ pub fn search(sections: &[StoredSection], mode: Option<Mode>) -> Result<Option<u
         bail!("requested {mode:?} backend is not enabled in this build");
     }
     super::cpu_search::search(sections, screen).map(Some)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn search_async(sections: &[StoredSection], mode: Option<Mode>) -> Result<Option<u32>> {
+    if verify_all(sections, None).is_ok() {
+        return Ok(None);
+    }
+    #[cfg(feature = "wgpu")]
+    if mode.is_none() || mode == Some(Mode::Wgpu) {
+        let screen = sections
+            .iter()
+            .filter(|s| s.descriptor.flags & 8 != 0 && !s.ciphertext.is_empty())
+            .min_by_key(|s| s.ciphertext.len())
+            .context("no nonempty RC4 section to search")?;
+        match super::wgpu_search::search_async(sections, screen).await {
+            Ok(salt) => {
+                return salt
+                    .map(Some)
+                    .context("no salt passed section verification");
+            }
+            Err(error) if mode.is_some() => return Err(error).context("WebGPU search failed"),
+            Err(error) => eprintln!("WebGPU failed: {error:#}; trying CPU"),
+        }
+    }
+    search(sections, mode)
 }

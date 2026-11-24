@@ -1,6 +1,10 @@
 //! A shared wall-clock budget across recovery, optimization and emission.
 use anyhow::{Context, Result, ensure};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 #[derive(Clone)]
 pub(crate) struct Budget {

@@ -7,10 +7,13 @@ license = "Apache-2.0"
 description = "Static Enigma unpacker"
 autotests = false
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["cuda", "wgpu"]
 cuda = ["dep:cubecl", "dep:cubecl-cuda", "dep:cudarc"]
-wgpu = ["dep:cubecl", "dep:cubecl-wgpu"]
+wgpu = ["dep:cubecl", "dep:cubecl-wgpu", "dep:wgpu", "dep:getrandom", "dep:cubecl-common", "dep:serde_json"]
 
 [dependencies]
 anyhow = "1"
@@ -21,12 +24,25 @@ cubecl-cuda = { version = "=0.10.0", default-features = false, features = ["std"
 cudarc = { version = "=0.19.10", default-features = false, features = ["cuda-13040", "dynamic-loading"], optional = true }
 cubecl-wgpu = { version = "=0.10.0", default-features = false, features = ["std"], optional = true }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "encoder", "block_encoder", "instr_info", "code_asm", "intel"] }
-indicatif = { version = "0.18", default-features = false }
 md5 = "0.8"
 rustc-hash = "2.1"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+indicatif = { version = "0.18", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cubecl-common = { version = "=0.10.0", default-features = false, features = ["std", "hash", "serde"], optional = true }
+getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
+serde_json = { version = "1", optional = true }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wgpu = { version = "29", default-features = false, features = ["webgpu", "wgsl"], optional = true }
+web-time = "1"
+zip = { version = "2", default-features = false }
+
 [dev-dependencies]
 sha2 = "0.10"
+zip = { version = "2", default-features = false }
 
 [build-dependencies]
 anyhow = "1"

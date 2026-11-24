@@ -1,8 +1,9 @@
 //! Shared CubeCL CUDA/WGPU MD5/RC4/LZ-prefix/CRC32 kernel.
-use super::{
-    extract::{StoredSection, verify_all},
-    search::{UINT32_END, finish_progress, progress},
-};
+#[cfg(not(target_arch = "wasm32"))]
+use super::extract::verify_all;
+#[cfg(not(target_arch = "wasm32"))]
+use super::search::{finish_progress, progress};
+use super::{extract::StoredSection, search::UINT32_END};
 use anyhow::{Context, Result, ensure};
 use cubecl::prelude::*;
 
@@ -20,6 +21,7 @@ pub struct GpuProbe<R: Runtime> {
     expected: u32,
     crc: u32,
     compressed: u32,
+    batch: u64,
 }
 
 impl<R: Runtime> std::fmt::Debug for GpuProbe<R> {
@@ -34,7 +36,17 @@ impl<R: Runtime> std::fmt::Debug for GpuProbe<R> {
 }
 
 impl<R: Runtime> GpuProbe<R> {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(section: &StoredSection, client: ComputeClient<R>) -> Result<Self> {
+        Self::with_batch(section, client, BATCH)
+    }
+
+    pub(crate) fn with_batch(
+        section: &StoredSection,
+        client: ComputeClient<R>,
+        batch: u64,
+    ) -> Result<Self> {
+        ensure!(batch > 0 && batch <= BATCH, "invalid GPU batch capacity");
         ensure!(!section.ciphertext.is_empty(), "empty GPU probe");
         ensure!(
             section.descriptor.flags & 8 != 0
@@ -74,20 +86,21 @@ impl<R: Runtime> GpuProbe<R> {
             cipher: client.create_from_slice(u32::as_bytes(&cipher)),
             parameters: client.create_from_slice(u32::as_bytes(&parameters)),
             table: client.create_from_slice(u32::as_bytes(&table)),
-            hits: client.empty(BATCH as usize * 4),
+            hits: client.empty(batch as usize * 4),
             client,
             length: cipher.len(),
             expected: u32::try_from(section.descriptor.expanded_size)?,
             crc: section.descriptor.crc32,
             compressed: section.descriptor.flags & 1,
+            batch,
         })
     }
 
     /// Returns every CRC hit, including salt zero and u32::MAX. There is no
     /// fixed-size candidate list that could overflow and silently lose hits.
-    pub fn scan(&mut self, start: u64, end: u64) -> Result<Vec<u32>> {
+    fn launch(&self, start: u64, end: u64) -> Result<cubecl::server::Handle> {
         ensure!(
-            start < end && end <= UINT32_END && end - start <= BATCH,
+            start < end && end <= UINT32_END && end - start <= self.batch,
             "invalid GPU batch"
         );
         let count = (end - start) as u32;
@@ -95,7 +108,7 @@ impl<R: Runtime> GpuProbe<R> {
         // Each hit reserves one slot. At most `count` lanes can hit, so the
         // candidate buffer cannot overflow, including a hit for every lane.
         // SAFETY: All device buffer handles were allocated with at least the lengths passed
-        // to `ArrayArg::from_raw_parts`, and `count <= BATCH`.
+        // to `ArrayArg::from_raw_parts`, and `count <= self.batch`.
         unsafe {
             enumerate::launch_unchecked::<R>(
                 &self.client,
@@ -113,7 +126,12 @@ impl<R: Runtime> GpuProbe<R> {
                 self.compressed,
             );
         }
-        // Read only the counter for batches without hits.
+        Ok(hit_count)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn scan(&mut self, start: u64, end: u64) -> Result<Vec<u32>> {
+        let hit_count = self.launch(start, end)?;
         let bytes = self
             .client
             .read_one(hit_count)
@@ -130,8 +148,32 @@ impl<R: Runtime> GpuProbe<R> {
         hits.sort_unstable();
         Ok(hits)
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn scan_async(&mut self, start: u64, end: u64) -> Result<Vec<u32>> {
+        let counter = self.launch(start, end)?;
+        let bytes = self
+            .client
+            .read_async(vec![counter])
+            .await
+            .context("read GPU hit count")?;
+        let count = u32::from_bytes(&bytes[0])[0] as usize;
+        ensure!(count as u64 <= end - start, "invalid GPU hit count");
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let bytes = self
+            .client
+            .read_async(vec![self.hits.clone()])
+            .await
+            .context("read GPU candidates")?;
+        let mut hits = u32::from_bytes(&bytes[0])[..count].to_vec();
+        hits.sort_unstable();
+        Ok(hits)
+    }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn search<R: Runtime>(
     backend: &'static str,
     sections: &[StoredSection],

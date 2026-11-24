@@ -1,15 +1,18 @@
 //! Salt enumeration using every available logical CPU core.
+#[cfg(not(target_arch = "wasm32"))]
+use super::search::{finish_progress, progress};
 use super::{
     extract::{StoredSection, verify_all},
-    search::{UINT32_END, finish_progress, progress},
+    search::UINT32_END,
 };
 use crate::common::{
     codec,
     crypto::{Rc4, SectionProbe},
 };
 use anyhow::{Context, Result};
+use std::ops::Range;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
-    ops::Range,
     sync::atomic::{AtomicU64, Ordering},
     thread,
 };
@@ -68,65 +71,106 @@ fn find(
     screen: &StoredSection,
     range: Range<u64>,
 ) -> Result<Option<u32>> {
-    let threads = thread::available_parallelism()?.get();
-    eprintln!("CPU search: {threads} workers (all available logical cores)");
-    let probe = SectionProbe::new(screen.descriptor.seed);
-    let next = AtomicU64::new(range.start);
-    let found = AtomicU64::new(UINT32_END);
-    let progress = progress("CPU", range.end - range.start);
-    thread::scope(|scope| {
-        for _ in 0..threads {
-            let (probe, next, found) = (&probe, &next, &found);
-            let progress = &progress;
-            let end = range.end;
-            scope.spawn(move || {
-                while found.load(Ordering::Relaxed) == UINT32_END {
-                    let start = next.fetch_add(CHUNK, Ordering::Relaxed);
-                    if start >= end {
-                        break;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let probe = SectionProbe::new(screen.descriptor.seed);
+        eprintln!("CPU search: one browser worker; full 32-bit salt range");
+        let mut value = range.start;
+        while value < range.end {
+            let stop = (value + CHUNK).min(range.end);
+            while value + 4 <= stop {
+                for (lane, cipher) in probe.ciphers(value as u32).into_iter().enumerate() {
+                    let salt = (value + lane as u64) as u32;
+                    if screen_matches(screen, cipher) && verify_all(sections, Some(salt)).is_ok() {
+                        return Ok(Some(salt));
                     }
-                    let stop = (start + CHUNK).min(end);
-                    let mut value = start;
-                    while value + 4 <= stop {
-                        if (value - start) & 255 == 0 && found.load(Ordering::Relaxed) != UINT32_END
-                        {
-                            progress.inc(value - start);
-                            return;
+                }
+                value += 4;
+            }
+            while value < stop {
+                let salt = value as u32;
+                if screen_matches(screen, probe.cipher(salt))
+                    && verify_all(sections, Some(salt)).is_ok()
+                {
+                    return Ok(Some(salt));
+                }
+                value += 1;
+            }
+            if (value - range.start).is_multiple_of(CHUNK * 256) {
+                eprintln!(
+                    "CPU search: {} / {} candidates",
+                    value - range.start,
+                    range.end - range.start
+                );
+            }
+        }
+        Ok(None)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let threads = thread::available_parallelism()?.get();
+        eprintln!("CPU search: {threads} workers (all available logical cores)");
+        let probe = SectionProbe::new(screen.descriptor.seed);
+        let next = AtomicU64::new(range.start);
+        let found = AtomicU64::new(UINT32_END);
+        let progress = progress("CPU", range.end - range.start);
+        thread::scope(|scope| {
+            for _ in 0..threads {
+                let (probe, next, found) = (&probe, &next, &found);
+                let progress = &progress;
+                let end = range.end;
+                scope.spawn(move || {
+                    while found.load(Ordering::Relaxed) == UINT32_END {
+                        let start = next.fetch_add(CHUNK, Ordering::Relaxed);
+                        if start >= end {
+                            break;
                         }
-                        for (lane, cipher) in probe.ciphers(value as u32).into_iter().enumerate() {
-                            let salt = (value + lane as u64) as u32;
-                            if screen_matches(screen, cipher)
+                        let stop = (start + CHUNK).min(end);
+                        let mut value = start;
+                        while value + 4 <= stop {
+                            if (value - start) & 255 == 0
+                                && found.load(Ordering::Relaxed) != UINT32_END
+                            {
+                                progress.inc(value - start);
+                                return;
+                            }
+                            for (lane, cipher) in
+                                probe.ciphers(value as u32).into_iter().enumerate()
+                            {
+                                let salt = (value + lane as u64) as u32;
+                                if screen_matches(screen, cipher)
+                                    && verify_all(sections, Some(salt)).is_ok()
+                                {
+                                    progress.inc(value - start + lane as u64 + 1);
+                                    found.store(salt as u64, Ordering::Relaxed);
+                                    return;
+                                }
+                            }
+                            value += 4;
+                        }
+                        for value in value..stop {
+                            if found.load(Ordering::Relaxed) != UINT32_END {
+                                progress.inc(value - start);
+                                return;
+                            }
+                            let salt = value as u32;
+                            if screen_matches(screen, probe.cipher(salt))
                                 && verify_all(sections, Some(salt)).is_ok()
                             {
-                                progress.inc(value - start + lane as u64 + 1);
-                                found.store(salt as u64, Ordering::Relaxed);
+                                progress.inc(value - start + 1);
+                                found.store(value, Ordering::Relaxed);
                                 return;
                             }
                         }
-                        value += 4;
+                        progress.inc(stop - start);
                     }
-                    for value in value..stop {
-                        if found.load(Ordering::Relaxed) != UINT32_END {
-                            progress.inc(value - start);
-                            return;
-                        }
-                        let salt = value as u32;
-                        if screen_matches(screen, probe.cipher(salt))
-                            && verify_all(sections, Some(salt)).is_ok()
-                        {
-                            progress.inc(value - start + 1);
-                            found.store(value, Ordering::Relaxed);
-                            return;
-                        }
-                    }
-                    progress.inc(stop - start);
-                }
-            });
-        }
-    });
-    finish_progress(&progress);
-    let salt = found.load(Ordering::Relaxed);
-    Ok((salt != UINT32_END).then_some(salt as u32))
+                });
+            }
+        });
+        finish_progress(&progress);
+        let salt = found.load(Ordering::Relaxed);
+        Ok((salt != UINT32_END).then_some(salt as u32))
+    }
 }
 
 #[cfg(test)]

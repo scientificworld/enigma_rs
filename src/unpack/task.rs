@@ -40,6 +40,29 @@ pub fn unpack(input: &[u8], mode: Option<search::Mode>) -> Result<Unpacked> {
     Ok(Unpacked { executable, files })
 }
 
+#[cfg(target_arch = "wasm32")]
+pub async fn unpack_async(input: &[u8], mode: Option<search::Mode>) -> Result<Unpacked> {
+    let pe = Pe::parse(input)?;
+    let config = config::parse(&pe)?;
+    let ctx = config.ctx.as_ref().context("unknown ctx layout")?;
+    let layout = config.layout.as_ref().context("unknown Loader layout")?;
+    ensure!(
+        ctx[layout.machine_suffix] == 0,
+        "machine-dependent section key suffix is not supported"
+    );
+    let executable = {
+        let sections = extract::stored_sections(&pe, &config)?;
+        let salt = search::search_async(&sections, mode).await?;
+        if let Some(salt) = salt {
+            eprintln!("Salt: {salt:#010x}");
+        }
+        let recovered = extract::recover(&sections, salt)?;
+        rebuild::rebuild(&pe, &config, &recovered)?
+    };
+    let files = evb::extract(&pe, &config)?;
+    Ok(Unpacked { executable, files })
+}
+
 /// Run the file-based task, including CUDA runtime setup and EVB output checks.
 pub fn run(input: &Path, mode: Option<search::Mode>) -> Result<()> {
     #[cfg(all(feature = "cuda", cuda_available))]

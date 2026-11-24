@@ -1,0 +1,79 @@
+name: Browser Workbench
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ENIGMA_CUDA: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.99.1'
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check native code
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --all-targets --no-default-features -- -D warnings
+          cargo test --all
+      - name: Check browser code
+        run: |
+          cargo clippy --lib --target wasm32-unknown-unknown --no-default-features -- -D warnings
+          cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wgpu -- -D warnings
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: wasm-pack@0.13.1
+      - name: Build browser engine
+        run: wasm-pack build --target web --release --out-dir web/pkg --out-name enigma_web --no-opt -- --no-default-features --features wgpu
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Test WASM engine
+        run: |
+          node --experimental-default-type=module --check web/app.js
+          node --experimental-default-type=module --check web/worker.js
+          node --experimental-default-type=module --test web/tests/engine.test.mjs
+      - name: Stage website
+        run: |
+          mkdir -p web/dist/pkg
+          cp web/index.html web/style.css web/app.js web/worker.js web/dist/
+          cp web/pkg/enigma_web.js web/pkg/enigma_web_bg.wasm web/dist/pkg/
+          touch web/dist/.nojekyll
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: web/dist
+          include-hidden-files: true
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

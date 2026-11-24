@@ -21,4 +21,6 @@ pub mod gpu_kernel;
 pub mod wgpu_search;
 
 pub use entry::extract_runtime;
+#[cfg(target_arch = "wasm32")]
+pub use task::unpack_async;
 pub use task::{Unpacked, run, run_runtime, unpack};

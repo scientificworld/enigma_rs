@@ -7,6 +7,13 @@ use std::{
     path::Path,
 };
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    pub fn browser_log(message: &str);
+}
+
 pub fn take(data: &[u8], offset: usize, size: usize) -> Result<&[u8]> {
     let end = offset.checked_add(size).context("offset overflow")?;
     data.get(offset..end).with_context(|| {

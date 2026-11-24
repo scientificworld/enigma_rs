@@ -952,10 +952,12 @@ dependencies = [
  "anyhow",
  "clap",
  "crc32fast",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-cuda",
  "cubecl-wgpu",
  "cudarc",
+ "getrandom",
  "iced-x86",
  "indicatif",
  "lzma-rust2",
@@ -964,6 +966,10 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tar",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-time",
+ "wgpu",
  "zip",
 ]
 
@@ -1156,9 +1162,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "rand_core",
+ "wasm-bindgen",
 ]
 
 [[package]]

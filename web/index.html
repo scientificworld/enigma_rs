@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Enigma / Static Workbench</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header><div class="brand"><span class="mark">E</span><strong>enigma<span class="muted">-rs</span></strong></div><span class="edition">STATIC WORKBENCH / WASM</span><span class="local">LOCAL ONLY</span></header>
+  <main>
+    <aside>
+      <div class="section-label">01 / INPUT</div>
+      <button id="pick" class="drop"><span class="file-icon">[ + ]</span><strong>打开受保护的文件</strong><span>点击选择，或拖入 EXE / DLL</span></button>
+      <input id="file" type="file" hidden>
+      <div id="filename" class="filename">尚未选择文件</div>
+      <div id="filesize" class="muted small">支持 x86 / x64 PE</div>
+      <div class="section-label second">02 / OPERATION</div>
+      <form id="controls">
+        <label class="mode"><input type="radio" name="mode" value="unpack" checked><span><strong>Unpack</strong><small>恢复 EXE，提取 EVB，下载 ZIP</small></span></label>
+        <label class="mode"><input type="radio" name="mode" value="runtime"><span><strong>Extract Runtime</strong><small>仅解码内嵌 Loader DLL</small></span></label>
+        <label class="mode"><input type="radio" name="mode" value="scan"><span><strong>Scan VM Entries</strong><small>列出已注册的模板 VM 入口</small></span></label>
+        <label class="mode"><input type="radio" name="mode" value="devirt"><span><strong>Devirtualize</strong><small>将指定 VM 入口还原为原生代码</small></span></label>
+        <fieldset id="devirt" hidden><label for="rva">入口 RVA / HEX</label><input id="rva" type="text" placeholder="0x23b053" spellcheck="false" autocomplete="off"><label class="check"><input id="binary" type="checkbox">下载机器码 .bin（否则 .asm）</label></fieldset>
+        <label id="backend-field" class="backend">Salt 搜索后端<select id="backend"><option value="auto">自动：WebGPU → CPU</option><option value="wgpu">WebGPU</option><option value="cpu">CPU</option></select></label>
+        <button id="run" class="primary" type="submit" disabled>运行分析</button>
+      </form>
+      <p class="privacy">本地处理，不上传、不执行输入程序。</p>
+    </aside>
+    <section class="workspace">
+      <div class="workspace-head"><div><div class="section-label">ANALYSIS / OUTPUT</div><h1 id="heading">分析工作台</h1></div><div class="workspace-actions"><button id="cancel" disabled>取消任务</button><button id="download" disabled>下载结果</button></div></div>
+      <div class="run-status"><span id="status" role="status" aria-live="polite">正在加载引擎…</span></div>
+      <div id="progress-area" hidden><div class="progress-caption"><span id="progress-label">处理中</span><span id="progress-value"></span></div><progress id="progress" max="1" aria-label="任务进度"></progress></div>
+      <div class="tabs"><button id="result-tab" class="active" aria-pressed="true">结果预览</button><button id="log-tab" aria-pressed="false" title="仅保留最近 500 行，连续搜索进度合并显示">运行日志</button><span id="elapsed" class="muted">READY</span></div>
+      <div id="result-pane" class="pane"><div id="welcome" class="welcome"><div class="diagram">PE <span>/</span> LOADER <span>/</span> NATIVE</div><h2>选择文件，开始分析。</h2><p>支持 Enigma Protector x86 / x64。<br>自动模式优先 WebGPU，不可用时回退 CPU。</p><p class="small">VM 还原支持部分结构，默认预算 180 秒。<br>GPU 异常后可重新加载并选择 CPU。</p></div><pre id="preview" hidden></pre></div>
+      <pre id="log" class="pane" hidden aria-label="运行日志（最近 500 行）"></pre>
+    </section>
+  </main>
+  <noscript>此工具需要启用 JavaScript 和 WebAssembly。</noscript>
+</body>
+</html>
