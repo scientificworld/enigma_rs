@@ -1,0 +1,59 @@
+name: Native Executables
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            executable: enigma-rs.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            executable: enigma-rs
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            executable: enigma-rs
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: enigma-rs
+    env:
+      ENIGMA_CUDA: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.99.1'
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build executable
+        run: cargo build --locked --release --bin enigma-rs --target ${{ matrix.target }} --no-default-features --features wgpu
+      - name: Smoke test
+        run: target/${{ matrix.target }}/release/${{ matrix.executable }} --help
+      - name: Package executable
+        run: tar -czf enigma-rs-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release ${{ matrix.executable }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: enigma-rs-${{ matrix.target }}
+          path: enigma-rs-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
